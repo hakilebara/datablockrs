@@ -1,3 +1,4 @@
+use datablockrs::model::{Block, BlockType};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
@@ -11,11 +12,17 @@ fn main() -> anyhow::Result<()> {
     stmt = conn.prepare("INSERT INTO blocks (id, title) VALUES (?1, ?2)")?;
     stmt.execute(params![uuid.to_string(), "hello"])?;
 
-    let title: String = conn.query_one(
+    let _title: String = conn.query_one(
         "SELECT id, title FROM blocks WHERE title = 'hello'",
         [],
         |row| row.get(1),
     )?;
-    println!("{}", title);
+
+    let todo = Block {
+        id: Uuid::new_v4(),
+        block_type: BlockType::Todo { checked: false },
+    };
+
+    println!("{}", serde_json::to_string(&todo)?);
     Ok(())
 }
