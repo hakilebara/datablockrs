@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
     stmt.execute(params![uuid.to_string(), "hello"])?;
 
     let title: String = conn.query_one(
-        "SELECT id, title FROM blocks WHERE title == 'hello'",
+        "SELECT id, title FROM blocks WHERE title = 'hello'",
         [],
         |row| row.get(1),
     )?;
