@@ -20,7 +20,10 @@ fn main() -> anyhow::Result<()> {
 
     let todo = Block {
         id: Uuid::new_v4(),
-        block_type: BlockType::Todo { checked: false },
+        r#type: BlockType::Todo {
+            checked: false,
+            text: "Do it".to_string(),
+        },
     };
 
     println!("{}", serde_json::to_string(&todo)?);
