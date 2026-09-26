@@ -10,22 +10,36 @@ pub enum Language {
 }
 
 #[derive(Serialize)]
+#[serde(tag = "type", content = "props", rename_all = "snake_case")]
 pub enum BlockType {
     Page { title: String },
-    Text,
-    Heading1,
-    Heading2,
-    Heading3,
-    BulletedListItem,
-    NumberedListItem,
-    Todo { checked: bool },
-    Quote,
-    Divider,
-    Code { language: Language },
+    Text { text: String },
+    Heading1 { text: String },
+    Heading2 { text: String },
+    Heading3 { text: String },
+    BulletedListItem { text: String },
+    NumberedListItem { text: String },
+    Todo { checked: bool, text: String },
+    Quote { text: String },
+    Divider {},
+    Code { language: Language, content: String },
 }
 
 #[derive(Serialize)]
 pub struct Block {
     pub id: Uuid,
-    pub block_type: BlockType,
+    pub parent_id: Option<Uuid>,
+    #[serde(flatten)]
+    pub r#type: BlockType,
+    pub position: f64,
+    pub created_at: String,
+    pub updated_at: Option<String>,
+}
+#[derive(Serialize)]
+pub struct NewBlock {
+    pub id: Uuid,
+    pub parent_id: Option<Uuid>,
+    #[serde(flatten)]
+    pub r#type: BlockType,
+    pub position: f64,
 }
