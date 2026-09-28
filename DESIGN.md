@@ -26,6 +26,12 @@ created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL - by default it will set the 
 updated_at TEXT - similar to 'created_at', but can be NULL will be set by an AFTER UPDATE SQLite trigger
 
 ```
+### PRAGMAs
+The `foreign_keys` PRAGMA affects all statements of a connection. It should therefore be set per connection.
+
+`journal_mode = WAL`, a Write Ahead Log allows reading and writing to happen concurrently without blocking each other. The WAL is persistent, it only needs to be sent once per sqlite file. Note: WAL is a no-op on `:memory:` databases.
+
+`user_version` is an integer for developers to use however they want. It won't be used here.
 
 ### Fractional indexing
 

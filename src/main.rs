@@ -1,27 +1,12 @@
-use datablockrs::model::{Block, BlockType};
-use rusqlite::Connection;
+use datablockrs::{
+    model::{Block, BlockType},
+    store::Store,
+};
 use uuid::Uuid;
 
 fn main() -> anyhow::Result<()> {
-    let conn = Connection::open_in_memory()?;
-    let mut stmt = conn.prepare(
-        r#"
-CREATE TABLE blocks (
-    id TEXT PRIMARY KEY, 
-    parent_id TEXT REFERENCES blocks(id) ON DELETE CASCADE,
-    position REAL,
-    props TEXT,
-    type TEXT NOT NULL,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at TEXT
-)
-    "#,
-    )?;
-    stmt.execute([])?;
-
-    // let uuid = Uuid::new_v4();
-    // stmt = conn.prepare("INSERT INTO blocks (id, parent_id, position, props, type, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?;
-    // stmt.execute(params![uuid.to_string(), 10.0, ])?;
+    let store = Store::open(&"db.sqlite")?;
+    store.init_schema()?;
 
     let todo = Block {
         id: Uuid::new_v4(),
