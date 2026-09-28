@@ -1,34 +1,50 @@
 use datablockrs::{
-    model::{Block, BlockType},
+    model::{BlockType, NewBlock},
     store::Store,
 };
 use uuid::Uuid;
 
 fn main() -> anyhow::Result<()> {
-    let store = Store::open(&"db.sqlite")?;
-    store.init_schema()?;
+    let mut store = Store::open("db.sqlite").expect("should be able to open a sqlite database");
+    store
+        .init_schema()
+        .expect("should be able to initialize a db schema");
 
-    let todo = Block {
-        id: Uuid::new_v4(),
+    let page_id = Uuid::new_v4();
+    store.insert(NewBlock {
+        id: page_id,
         parent_id: None,
+        r#type: BlockType::Page {
+            title: "Main Page".to_string(),
+        },
+        position: 10.0,
+    })?;
+
+    store.insert(NewBlock {
+        id: Uuid::new_v4(),
+        parent_id: Some(page_id),
+        r#type: BlockType::Divider {},
+        position: 11.0,
+    })?;
+    store.insert(NewBlock {
+        id: Uuid::new_v4(),
+        parent_id: Some(page_id),
+        r#type: BlockType::Divider {},
+        position: 12.0,
+    })?;
+    store.insert(NewBlock {
+        id: Uuid::new_v4(),
+        parent_id: Some(page_id),
         r#type: BlockType::Todo {
             checked: false,
             text: "Do it".to_string(),
         },
-        position: 10.0,
-        created_at: "2026-03-01T19:05:00.000Z".to_string(),
-        updated_at: Some("2026-04-01T19:05:00.000Z".to_string()),
-    };
-    let divider = Block {
-        id: Uuid::new_v4(),
-        parent_id: None,
-        r#type: BlockType::Divider {},
-        position: 10.0,
-        created_at: "2026-03-01T19:05:00.000Z".to_string(),
-        updated_at: Some("2026-04-01T19:05:00.000Z".to_string()),
-    };
+        position: 13.0,
+    })?;
 
-    println!("{}", serde_json::to_string(&todo)?);
-    println!("{}", serde_json::to_string(&divider)?);
+    let children_blocks = store.children_of(page_id)?;
+
+    println!("{:?}", serde_json::to_string_pretty(&children_blocks)?);
+
     Ok(())
 }
