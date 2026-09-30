@@ -10,7 +10,7 @@ pub struct Store {
 type BlockRow = (
     uuid::Uuid,
     Option<uuid::Uuid>,
-    f64,
+    u32,
     String,
     String,
     String,
@@ -42,32 +42,15 @@ impl Store {
         })
     }
 
-    pub fn insert(&mut self, block: NewBlock) -> anyhow::Result<Block> {
+    fn prop_type_from_block(block: &NewBlock) -> anyhow::Result<(String, String)> {
         let block_type_value = serde_json::to_value(&block.r#type)?;
-
         let props = block_type_value.get("props").unwrap().to_string();
-        let r#type = block_type_value.get("type").unwrap().as_str();
-
-        self.conn.execute(
-            "INSERT INTO blocks (id, parent_id, position, props, type)
-            VALUES (?1, ?2, ?3, ?4, ?5);",
-            params![block.id, block.parent_id, block.position, props, r#type],
-        )?;
-
-        let row = self.conn.query_row(
-            "SELECT id, parent_id, position, props, type, created_at, updated_at FROM blocks WHERE id = ?1",
-            params![block.id],
-            |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?))
-            })?;
-        Self::block_from_row(row)
+        let r#type = block_type_value
+            .get("type")
+            .unwrap()
+            .as_str()
+            .expect("a block must should have a type");
+        Ok((r#type.to_owned(), props))
     }
 
     pub fn open(path: &str) -> Result<Self, rusqlite::Error> {
@@ -83,14 +66,15 @@ impl Store {
         CREATE TABLE IF NOT EXISTS blocks (
             id TEXT PRIMARY KEY,
             parent_id TEXT REFERENCES blocks(id) ON DELETE CASCADE,
-            position REAL,
+            position INTEGER NOT NULL,
             props TEXT,
             type TEXT NOT NULL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updated_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_blocks_parent ON blocks (parent_id, position);
-        CREATE TRIGGER IF NOT EXISTS tgr_updated_at AFTER UPDATE ON blocks
+        CREATE TRIGGER IF NOT EXISTS tgr_updated_at
+        AFTER UPDATE OF parent_id, props, type ON blocks
          BEGIN
             UPDATE blocks SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
          END;
@@ -124,10 +108,10 @@ impl Store {
         })
     }
 
-    pub fn children_of(&self, parent_id: Uuid) -> anyhow::Result<Vec<Block>> {
+    pub fn children_of(&self, parent_id: Option<Uuid>) -> anyhow::Result<Vec<Block>> {
         let mut blocks = vec![];
 
-        let mut stmt = self.conn.prepare("SELECT id, parent_id, position, props, type, created_at, updated_at FROM blocks WHERE parent_id = ?1 ORDER BY position")?;
+        let mut stmt = self.conn.prepare("SELECT id, parent_id, position, props, type, created_at, updated_at FROM blocks WHERE parent_id IS ?1 ORDER BY position")?;
         let mut rows = stmt.query(params![parent_id])?;
 
         while let Some(row) = rows.next()? {
@@ -143,6 +127,86 @@ impl Store {
             blocks.push(Self::block_from_row(blockrow)?);
         }
         Ok(blocks)
+    }
+    pub fn append_child(&mut self, block: NewBlock) -> anyhow::Result<Block> {
+        let (r#type, props) = Store::prop_type_from_block(&block)?;
+
+        let tx = self.conn.transaction()?;
+
+        // compute the block's position
+        let max_sibling_position: Option<u32> = tx.query_row(
+            "SELECT MAX(position) FROM blocks WHERE parent_id IS ?",
+            params![block.parent_id],
+            |row| row.get(0),
+        )?;
+
+        let position = if let Some(max) = max_sibling_position {
+            max + 1
+        } else {
+            0
+        };
+
+        tx.execute(
+            "INSERT INTO blocks (id, parent_id, position, props, type)
+            VALUES (?1, ?2, ?3, ?4, ?5);",
+            params![block.id, block.parent_id, position, props, r#type],
+        )?;
+
+        let row = tx.query_row(
+            "SELECT id, parent_id, position, props, type, created_at, updated_at FROM blocks WHERE id = ?1",
+            params![block.id],
+            |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?))
+            })?;
+
+        tx.commit()?;
+
+        Self::block_from_row(row)
+    }
+
+    pub fn insert_at(&mut self, block: NewBlock, index: u32) -> anyhow::Result<Block> {
+        let (r#type, props) = Store::prop_type_from_block(&block)?;
+
+        let tx = self.conn.transaction()?;
+
+        tx.execute(
+            "UPDATE blocks SET position = position + 1 WHERE parent_id IS ?1 AND position >= ?2",
+            params![block.parent_id, index],
+        )?;
+
+        tx.execute(
+            "INSERT INTO blocks (id, parent_id, position, props, type)
+            VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![block.id, block.parent_id, index, props, r#type],
+        )?;
+
+        let row = tx.query_row(
+            "SELECT id, parent_id, position, props, type, created_at, updated_at
+            FROM blocks WHERE id = ?1",
+            params![block.id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )?;
+
+        tx.commit()?;
+
+        Self::block_from_row(row)
     }
 }
 
@@ -162,13 +226,13 @@ mod tests {
             INSERT INTO blocks (id, parent_id, position, props, type)
             VALUES (?1, ?2, ?3, ?4, ?5);"#,
         )?;
-        let parent_uuid = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
 
         // parent block
         stmt.execute(params![
-            parent_uuid,
+            parent_id,
             None::<Uuid>,
-            10.0,
+            0,
             "{\"text\": \"hello\"}",
             "todo"
         ])?;
@@ -176,8 +240,8 @@ mod tests {
         // child block
         stmt.execute(params![
             Uuid::new_v4(),
-            parent_uuid,
-            20.0,
+            parent_id,
+            1,
             "{\"text\": \"hello\"}",
             "todo"
         ])?;
@@ -188,7 +252,7 @@ mod tests {
         assert_eq!(count, 2);
 
         let mut stmt = store.conn.prepare("DELETE FROM blocks WHERE id = ?1")?;
-        stmt.execute(params![parent_uuid])?;
+        stmt.execute(params![parent_id])?;
 
         let mut stmt = store.conn.prepare("SELECT COUNT(*) from blocks")?;
         let count: i64 = stmt.query_row([], |r| r.get(0))?;
@@ -199,20 +263,19 @@ mod tests {
     }
 
     #[test]
-    fn insert_then_get() -> anyhow::Result<()> {
-        let (id, parent_id, position, r#type) = (Uuid::new_v4(), None, 10.0, BlockType::Divider {});
+    fn append_returns_block() -> anyhow::Result<()> {
+        let (id, parent_id, r#type) = (Uuid::new_v4(), None, BlockType::Divider {});
         let new_block = NewBlock {
             id,
             parent_id,
-            position,
             r#type: r#type.clone(),
         };
         let mut store = Store::open(":memory:")?;
         store.init_schema()?;
-        let inserted_block = store.insert(new_block)?;
+        let inserted_block = store.append_child(new_block)?;
         assert_eq!(id, inserted_block.id);
         assert_eq!(parent_id, inserted_block.parent_id);
-        assert_eq!(position, inserted_block.position);
+        assert_eq!(inserted_block.position, 0);
         assert_eq!(r#type, inserted_block.r#type);
 
         Ok(())
@@ -222,15 +285,14 @@ mod tests {
     fn block_gets_found_by_id() -> anyhow::Result<()> {
         let mut store = Store::open(":memory:")?;
         store.init_schema()?;
-        let (id, parent_id, position, r#type) = (Uuid::new_v4(), None, 10.0, BlockType::Divider {});
+        let (id, parent_id, r#type) = (Uuid::new_v4(), None, BlockType::Divider {});
 
         let new_block = NewBlock {
             id,
             parent_id,
-            position,
             r#type: r#type,
         };
-        let inserted_block = store.insert(new_block)?;
+        let inserted_block = store.append_child(new_block)?;
 
         let retreived_block = store.get(id)?.unwrap();
 
@@ -254,36 +316,147 @@ mod tests {
         store.init_schema()?;
 
         let parent_id = Uuid::new_v4();
-        let _parent_block = store.insert(NewBlock {
+        let _parent_block = store.append_child(NewBlock {
             id: parent_id,
             parent_id: None,
-            position: 10.0,
             r#type: BlockType::Page {
                 title: "A Page".to_string(),
             },
         });
-        let _child_block_1 = store.insert(NewBlock {
+        let _child_block_1 = store.append_child(NewBlock {
             id: Uuid::new_v4(),
             parent_id: Some(parent_id),
             r#type: BlockType::Divider {},
-            position: 11.0,
         });
-        let _child_block_2 = store.insert(NewBlock {
+        let _child_block_2 = store.append_child(NewBlock {
             id: Uuid::new_v4(),
             parent_id: Some(parent_id),
             r#type: BlockType::Divider {},
-            position: 12.0,
         });
-        let _child_block_3 = store.insert(NewBlock {
+        let _child_block_3 = store.append_child(NewBlock {
             id: Uuid::new_v4(),
             parent_id: Some(parent_id),
             r#type: BlockType::Divider {},
-            position: 13.0,
         });
 
-        let children_blocks = store.children_of(parent_id)?;
+        let children_blocks = store.children_of(Some(parent_id))?;
 
         assert_eq!(children_blocks.len(), 3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn childrenof_returns_orphan_siblings() -> anyhow::Result<()> {
+        let mut store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: None,
+            r#type: BlockType::Divider {},
+        })?;
+        store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: None,
+            r#type: BlockType::Divider {},
+        })?;
+        store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: None,
+            r#type: BlockType::Divider {},
+        })?;
+
+        let children_blocks = store.children_of(None)?;
+
+        assert_eq!(children_blocks.len(), 3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn append_child_on_empty_parent() -> anyhow::Result<()> {
+        let mut store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        let block = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: None,
+            r#type: BlockType::Divider {},
+        })?;
+
+        assert_eq!(block.position, 0);
+
+        Ok(())
+    }
+    #[test]
+    fn insert_block_at_empty_parent() -> anyhow::Result<()> {
+        let mut store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        let index = 0;
+
+        let block = store.insert_at(
+            NewBlock {
+                id: Uuid::new_v4(),
+                parent_id: None,
+                r#type: BlockType::Divider {},
+            },
+            index,
+        )?;
+
+        assert_eq!(block.position, index);
+
+        Ok(())
+    }
+
+    #[test]
+    fn insert_in_the_middle() -> anyhow::Result<()> {
+        let mut store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        let parent_id = Uuid::new_v4();
+        let block_0_id = Uuid::new_v4();
+        let block_1_id = Uuid::new_v4();
+        let middle_block_id = Uuid::new_v4();
+
+        store.append_child(NewBlock {
+            id: parent_id,
+            parent_id: None,
+            r#type: BlockType::Divider {},
+        })?;
+
+        let block_0 = store.append_child(NewBlock {
+            id: block_0_id,
+            parent_id: Some(parent_id),
+            r#type: BlockType::Divider {},
+        })?;
+        assert_eq!(block_0.position, 0);
+
+        let block_1 = store.append_child(NewBlock {
+            id: block_1_id,
+            parent_id: Some(parent_id),
+            r#type: BlockType::Divider {},
+        })?;
+        assert_eq!(block_1.position, 1);
+
+        let middle_block = store.insert_at(
+            NewBlock {
+                id: middle_block_id,
+                parent_id: Some(parent_id),
+                r#type: BlockType::Divider {},
+            },
+            1,
+        )?;
+        assert_eq!(middle_block.position, 1);
+
+        let children = store.children_of(Some(parent_id))?;
+        assert_eq!(children[0].id, block_0_id);
+        assert_eq!(children[1].id, middle_block_id);
+        assert_eq!(children[2].id, block_1_id);
+        assert_eq!(children[0].position, 0);
+        assert_eq!(children[1].position, 1);
+        assert_eq!(children[2].position, 2);
 
         Ok(())
     }

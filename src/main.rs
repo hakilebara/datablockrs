@@ -11,40 +11,43 @@ fn main() -> anyhow::Result<()> {
         .expect("should be able to initialize a db schema");
 
     let page_id = Uuid::new_v4();
-    store.insert(NewBlock {
+    let parent_block = store.append_child(NewBlock {
         id: page_id,
         parent_id: None,
         r#type: BlockType::Page {
             title: "Main Page".to_string(),
         },
-        position: 10.0,
     })?;
 
-    store.insert(NewBlock {
+    store.append_child(NewBlock {
         id: Uuid::new_v4(),
         parent_id: Some(page_id),
         r#type: BlockType::Divider {},
-        position: 11.0,
     })?;
-    store.insert(NewBlock {
+    store.append_child(NewBlock {
         id: Uuid::new_v4(),
         parent_id: Some(page_id),
         r#type: BlockType::Divider {},
-        position: 12.0,
     })?;
-    store.insert(NewBlock {
-        id: Uuid::new_v4(),
-        parent_id: Some(page_id),
-        r#type: BlockType::Todo {
-            checked: false,
-            text: "Do it".to_string(),
+    store.insert_at(
+        NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(page_id),
+            r#type: BlockType::Todo {
+                checked: false,
+                text: "Do it".to_string(),
+            },
         },
-        position: 13.0,
-    })?;
+        1,
+    )?;
 
-    let children_blocks = store.children_of(page_id)?;
+    let children_blocks = store.children_of(Some(page_id))?;
 
-    println!("{:?}", serde_json::to_string_pretty(&children_blocks)?);
+    println!(
+        "parent block:\n{},\n\nchildren blocks:\n{}",
+        serde_json::to_string_pretty(&parent_block)?,
+        serde_json::to_string_pretty(&children_blocks)?
+    );
 
     Ok(())
 }

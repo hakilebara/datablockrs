@@ -49,7 +49,7 @@ pub struct Block {
     pub parent_id: Option<Uuid>,
     #[serde(flatten)]
     pub r#type: BlockType,
-    pub position: f64,
+    pub position: u32,
     pub created_at: String,
     pub updated_at: Option<String>,
 }
@@ -59,7 +59,6 @@ pub struct NewBlock {
     pub parent_id: Option<Uuid>,
     #[serde(flatten)]
     pub r#type: BlockType,
-    pub position: f64,
 }
 
 #[cfg(test)]
