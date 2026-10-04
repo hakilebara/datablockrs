@@ -10,44 +10,46 @@ fn main() -> anyhow::Result<()> {
         .init_schema()
         .expect("should be able to initialize a db schema");
 
-    let page_id = Uuid::new_v4();
-    let parent_block = store.append_child(NewBlock {
-        id: page_id,
+    let root = store.append_child(NewBlock {
+        id: Uuid::new_v4(),
         parent_id: None,
         r#type: BlockType::Page {
-            title: "Main Page".to_string(),
+            title: "Root".to_string(),
         },
     })?;
 
-    store.append_child(NewBlock {
+    let first_child = store.append_child(NewBlock {
         id: Uuid::new_v4(),
-        parent_id: Some(page_id),
-        r#type: BlockType::Divider {},
-    })?;
-    store.append_child(NewBlock {
-        id: Uuid::new_v4(),
-        parent_id: Some(page_id),
-        r#type: BlockType::Divider {},
-    })?;
-    store.insert_at(
-        NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: Some(page_id),
-            r#type: BlockType::Todo {
-                checked: false,
-                text: "Do it".to_string(),
-            },
+        parent_id: Some(root.id),
+        r#type: BlockType::Text {
+            text: String::from("A | Root > A"),
         },
-        1,
-    )?;
+    })?;
+    store.append_child(NewBlock {
+        id: Uuid::new_v4(),
+        parent_id: Some(root.id),
+        r#type: BlockType::Text {
+            text: String::from("B | Root > B"),
+        },
+    })?;
+    store.append_child(NewBlock {
+        id: Uuid::new_v4(),
+        parent_id: Some(first_child.id),
+        r#type: BlockType::Text {
+            text: String::from("C | Root > A > C"),
+        },
+    })?;
+    store.append_child(NewBlock {
+        id: Uuid::new_v4(),
+        parent_id: Some(root.id),
+        r#type: BlockType::Text {
+            text: String::from("D | Root > D"),
+        },
+    })?;
 
-    let children_blocks = store.children_of(Some(page_id))?;
+    let blocks = store.page_tree(root.id)?;
 
-    println!(
-        "parent block:\n{},\n\nchildren blocks:\n{}",
-        serde_json::to_string_pretty(&parent_block)?,
-        serde_json::to_string_pretty(&children_blocks)?
-    );
+    println!("{}", serde_json::to_string_pretty(&blocks)?);
 
     Ok(())
 }

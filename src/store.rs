@@ -1,5 +1,5 @@
 use crate::model::{Block, BlockType, NewBlock};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -73,11 +73,30 @@ impl Store {
             updated_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_blocks_parent ON blocks (parent_id, position);
+
         CREATE TRIGGER IF NOT EXISTS tgr_updated_at
         AFTER UPDATE OF parent_id, props, type ON blocks
          BEGIN
             UPDATE blocks SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
          END;
+
+        CREATE TRIGGER IF NOT EXISTS tgr_blocks_no_cycle_update
+        BEFORE UPDATE OF parent_id ON blocks
+        WHEN NEW.parent_id IS NOT NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'cycle detected')
+          WHERE EXISTS (
+            WITH RECURSIVE ancestors(id) AS (
+              SELECT NEW.parent_id
+              UNION
+              SELECT b.parent_id FROM blocks b
+              JOIN ancestors a ON b.id = a.id
+              WHERE b.parent_id IS NOT NULL
+            )
+            SELECT 1 FROM ancestors WHERE id = NEW.id
+          );
+        END;
+
         COMMIT;
         "#,
         )?;
@@ -208,6 +227,103 @@ impl Store {
 
         Self::block_from_row(row)
     }
+
+    pub fn page_tree(&self, page_id: Uuid) -> anyhow::Result<Vec<(u32, Block)>> {
+        let mut blocks = vec![];
+
+        let mut stmt = self.conn.prepare(
+            "
+            WITH RECURSIVE tree(id, parent_id, position, props, type, created_at, updated_at, depth) AS (
+              SELECT id, parent_id, position, props, type, created_at, updated_at, 0
+              FROM blocks
+              WHERE id = ?1
+
+              UNION ALL
+
+              SELECT b.id, b.parent_id, b.position, b.props, b.type, b.created_at, b.updated_at, t.depth + 1
+              FROM tree t
+              JOIN blocks b ON t.id = b.parent_id
+              -- the DESC modifier will cause lower levels in the tree (with larger depth values)
+              -- to be processed first by the recursive-select, resulting in a depth-first search
+              ORDER BY 8 DESC, 3 ASC
+            )
+            SELECT id, parent_id, position, props, type, created_at, updated_at, depth FROM tree;
+        ",
+        )?;
+        let mut rows = stmt.query(params![page_id])?;
+
+        while let Some(row) = rows.next()? {
+            let blockrow: BlockRow = (
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+            );
+            let depth: u32 = row.get(7)?;
+            blocks.push((depth, Self::block_from_row(blockrow)?));
+        }
+
+        Ok(blocks)
+    }
+
+    pub fn delete_subtree(&mut self, id: Uuid) -> anyhow::Result<()> {
+        self.conn
+            .execute("DELETE FROM blocks WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn move_block(
+        &mut self,
+        id: Uuid,
+        new_parent: Option<Uuid>,
+        index: u32,
+    ) -> anyhow::Result<Block> {
+        let tx = self.conn.transaction()?;
+
+        // shift the new parent's siblings before re-parenting
+        // so that same-parent moves also keep their order
+        tx.execute(
+            "
+            UPDATE blocks SET position = position + 1
+            WHERE parent_id IS ?1 AND position >= ?2
+            ",
+            params![new_parent, index],
+        )?;
+
+        tx.execute(
+            "
+            UPDATE blocks SET parent_id = ?1, position = ?2
+            WHERE id = ?3
+            ",
+            params![new_parent, index, id],
+        )?;
+
+        let row = tx.query_row(
+            "
+            SELECT id, parent_id, position, props, type, created_at, updated_at
+            FROM blocks WHERE id = ?1
+            ",
+            params![id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )?;
+
+        tx.commit()?;
+
+        Self::block_from_row(row)
+    }
 }
 
 #[cfg(test)]
@@ -316,28 +432,14 @@ mod tests {
         store.init_schema()?;
 
         let parent_id = Uuid::new_v4();
-        let _parent_block = store.append_child(NewBlock {
+        store.append_child(NewBlock {
             id: parent_id,
             parent_id: None,
             r#type: BlockType::Page {
                 title: "A Page".to_string(),
             },
-        });
-        let _child_block_1 = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: Some(parent_id),
-            r#type: BlockType::Divider {},
-        });
-        let _child_block_2 = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: Some(parent_id),
-            r#type: BlockType::Divider {},
-        });
-        let _child_block_3 = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: Some(parent_id),
-            r#type: BlockType::Divider {},
-        });
+        })?;
+        append_elements(&mut store, Some(parent_id), BlockType::Divider {}, 3)?;
 
         let children_blocks = store.children_of(Some(parent_id))?;
 
@@ -351,21 +453,7 @@ mod tests {
         let mut store = Store::open(":memory:")?;
         store.init_schema()?;
 
-        store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: None,
-            r#type: BlockType::Divider {},
-        })?;
-        store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: None,
-            r#type: BlockType::Divider {},
-        })?;
-        store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: None,
-            r#type: BlockType::Divider {},
-        })?;
+        append_elements(&mut store, None, BlockType::Divider {}, 3)?;
 
         let children_blocks = store.children_of(None)?;
 
@@ -457,6 +545,279 @@ mod tests {
         assert_eq!(children[0].position, 0);
         assert_eq!(children[1].position, 1);
         assert_eq!(children[2].position, 2);
+
+        Ok(())
+    }
+
+    /// appends n elments of given type
+    fn append_elements(
+        store: &mut Store,
+        parent_id: Option<Uuid>,
+        r#type: BlockType,
+        n: u32,
+    ) -> anyhow::Result<()> {
+        for _ in 0..n {
+            store.append_child(NewBlock {
+                id: Uuid::new_v4(),
+                parent_id,
+                r#type: r#type.clone(),
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn can_return_page_tree() -> anyhow::Result<()> {
+        let mut store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        let parent_id = Uuid::new_v4();
+
+        store.append_child(NewBlock {
+            id: parent_id,
+            parent_id: None,
+            r#type: BlockType::Page {
+                title: String::from("Main Page"),
+            },
+        })?;
+
+        store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(parent_id),
+            r#type: BlockType::Divider {},
+        })?;
+
+        let sub_block_1 = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(parent_id),
+            r#type: BlockType::Divider {},
+        })?;
+
+        // parent > sub_block_1 > sub_block_2
+        let sub_block_2 = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(sub_block_1.id),
+            r#type: BlockType::Divider {},
+        })?;
+
+        // parent > sub_block_1 > sub_block_2 > sub_block_3
+        let sub_block_3 = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(sub_block_2.id),
+            r#type: BlockType::Todo {
+                checked: true,
+                text: String::from("it is done"),
+            },
+        })?;
+
+        let vec = store.page_tree(parent_id)?;
+        assert_eq!(vec.len(), 5);
+
+        let level_3_block: Vec<_> = vec.iter().filter(|(d, _)| *d == 3).collect();
+
+        assert_eq!(level_3_block.len(), 1);
+        let (_, block): &(u32, Block) = level_3_block[0];
+        assert_eq!(*block, sub_block_3);
+
+        Ok(())
+    }
+
+    /// Spec for `move_block(id, new_parent, index)`:
+    /// - the block is re-parented to `new_parent` and lands at `index`
+    ///   among the new siblings (shift semantics, like `insert_at`)
+    /// - the old parent's remaining children keep their relative order
+    /// - changing `parent_id` fires the trigger: `updated_at` is set on the
+    ///   moved block, but NOT on the shifted siblings (position-only updates)
+    #[test]
+    fn move_block_reparents_at_index() -> anyhow::Result<()> {
+        let mut store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        let page_a = Uuid::new_v4();
+        let page_b = Uuid::new_v4();
+
+        store.append_child(NewBlock {
+            id: page_a,
+            parent_id: None,
+            r#type: BlockType::Page {
+                title: "Page A".to_string(),
+            },
+        })?;
+        store.append_child(NewBlock {
+            id: page_b,
+            parent_id: None,
+            r#type: BlockType::Page {
+                title: "Page B".to_string(),
+            },
+        })?;
+
+        let a0 = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(page_a),
+            r#type: BlockType::Divider {},
+        })?;
+        let a1 = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(page_a),
+            r#type: BlockType::Divider {},
+        })?;
+        let a2 = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(page_a),
+            r#type: BlockType::Divider {},
+        })?;
+        let b0 = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(page_b),
+            r#type: BlockType::Divider {},
+        })?;
+        let b1 = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(page_b),
+            r#type: BlockType::Divider {},
+        })?;
+
+        let moved = store.move_block(a1.id, Some(page_b), 1)?;
+
+        assert_eq!(moved.parent_id, Some(page_b));
+        assert_eq!(moved.position, 1);
+        assert!(
+            moved.updated_at.is_some(),
+            "re-parenting must bump updated_at"
+        );
+
+        let children_b = store.children_of(Some(page_b))?;
+        assert_eq!(children_b.len(), 3);
+        assert_eq!(children_b[0].id, b0.id);
+        assert_eq!(children_b[1].id, a1.id);
+        assert_eq!(children_b[2].id, b1.id);
+        assert_eq!(children_b[1].position, 1);
+        assert_eq!(children_b[2].position, 2);
+        assert!(
+            children_b[2].updated_at.is_none(),
+            "position shift must not bump updated_at"
+        );
+
+        let children_a = store.children_of(Some(page_a))?;
+        assert_eq!(children_a.len(), 2);
+        assert_eq!(children_a[0].id, a0.id);
+        assert_eq!(children_a[1].id, a2.id);
+
+        Ok(())
+    }
+
+    /// CASCADE must remove the whole subtree: deleting a middle block
+    /// removes its children AND grandchildren, leaving siblings intact.
+    #[test]
+    fn delete_subtree_removes_grandchildren() -> anyhow::Result<()> {
+        let mut store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        let root = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: None,
+            r#type: BlockType::Page {
+                title: "Root".to_string(),
+            },
+        })?;
+
+        let child = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(root.id),
+            r#type: BlockType::Divider {},
+        })?;
+        let sibling = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(root.id),
+            r#type: BlockType::Divider {},
+        })?;
+        let grandchild = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(child.id),
+            r#type: BlockType::Divider {},
+        })?;
+
+        store.delete_subtree(child.id)?;
+
+        assert!(store.get(grandchild.id)?.is_none());
+        assert!(store.get(child.id)?.is_none());
+        assert!(store.get(root.id)?.is_some());
+        assert!(store.get(sibling.id)?.is_some());
+
+        let children = store.children_of(Some(root.id))?;
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].id, sibling.id);
+
+        Ok(())
+    }
+
+    /// The `tgr_blocks_no_cycle_update` trigger must refuse a move that
+    /// would place a block under its own descendant.
+    #[test]
+    fn move_block_rejects_cycles() -> anyhow::Result<()> {
+        let mut store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        let parent = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: None,
+            r#type: BlockType::Page {
+                title: "Page".to_string(),
+            },
+        })?;
+        let child = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(parent.id),
+            r#type: BlockType::Divider {},
+        })?;
+        let grandchild = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(child.id),
+            r#type: BlockType::Divider {},
+        })?;
+
+        let result = store.move_block(parent.id, Some(grandchild.id), 0);
+        assert!(result.is_err(), "moving under a descendant must fail");
+
+        // the tree must be untouched after the failed move
+        assert!(store.get(parent.id)?.is_some());
+        assert_eq!(store.get(parent.id)?.unwrap().parent_id, None);
+        let children = store.children_of(Some(child.id))?;
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].id, grandchild.id);
+
+        Ok(())
+    }
+
+    /// The cycle guard lives in the schema, not in the Rust API:
+    /// a raw SQL UPDATE attempting to create a cycle must be aborted too.
+    #[test]
+    fn cycle_guard_is_db_level() -> anyhow::Result<()> {
+        let mut store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        let parent = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: None,
+            r#type: BlockType::Page {
+                title: "Page".to_string(),
+            },
+        })?;
+        let child = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(parent.id),
+            r#type: BlockType::Divider {},
+        })?;
+
+        let result = store.conn.execute(
+            "UPDATE blocks SET parent_id = ?1 WHERE id = ?2",
+            params![child.id, parent.id],
+        );
+
+        assert!(
+            result.is_err(),
+            "raw SQL cycle must be aborted by the trigger"
+        );
 
         Ok(())
     }
