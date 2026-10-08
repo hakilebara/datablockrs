@@ -1,0 +1,75 @@
+package datablockrs:blockstore;
+
+interface types {
+  enum language {
+    javascript,
+    html,
+    python,
+    markdown,
+  }
+
+  record text-props {
+    text: string,
+  }
+
+  record page-props {
+    title: string,
+  }
+
+  record todo-props {
+    checked: bool,
+    text: string,
+  }
+
+  record code-props {
+    language: language,
+    content: string,
+  }
+
+  variant block-type {
+    page(page-props),
+    text(text-props),
+    heading1(text-props),
+    heading2(text-props),
+    heading3(text-props),
+    bulleted-list-item(text-props),
+    numbered-list-item(text-props),
+    todo(todo-props),
+    quote(text-props),
+    divider,
+    code(code-props),
+  }
+
+  type uuid = string;
+  type store-error = string;
+
+  record block {
+    id: uuid,
+    parent-id: option<uuid>,
+    %type: block-type,
+    position: u32,
+    created-at: string,
+    updated-at: option<string>,
+  }
+
+  record new-block {
+    id: uuid,
+    parent-id: option<uuid>,
+    %type: block-type,
+  }
+
+
+  init-schema: func() -> result<_, store-error>;
+  get: func(id: uuid) -> result<option<block>, store-error>;
+  children-of: func(parent-id: option<uuid>) -> result<list<block>, store-error>;
+  append-child: func(block: new-block) -> result<block, store-error>;
+  insert-at: func(block: new-block, index: u32) -> result<block, store-error>;
+  page-tree: func(page-id: uuid) -> result<list<tuple<u32, block>>, store-error>;
+  delete-subtree: func(id: uuid) -> result<_, store-error>;
+  move-block: func(id: uuid, new-parent: option<uuid>, index: u32) -> result<block, store-error>;
+  set-block: func(id: uuid, %type: block-type) -> result<block, store-error>;
+}
+
+world blockstore {
+  export types;
+}
