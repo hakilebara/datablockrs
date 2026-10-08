@@ -41,6 +41,23 @@ impl BlockType {
             BlockType::Quote { .. } => "quote",
         }
     }
+
+    pub fn is_valid_type_name(typename: &str) -> bool {
+        matches!(
+            typename,
+            "page"
+                | "text"
+                | "heading1"
+                | "heading2"
+                | "heading3"
+                | "bulleted_list_item"
+                | "numbered_list_item"
+                | "todo"
+                | "divider"
+                | "code"
+                | "quote"
+        )
+    }
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Debug)]

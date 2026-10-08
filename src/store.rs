@@ -1,3 +1,4 @@
+use crate::error::StoreError;
 use crate::model::{Block, BlockType, NewBlock};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::json;
@@ -18,8 +19,15 @@ type BlockRow = (
 );
 
 impl Store {
-    fn block_from_row(row: BlockRow) -> anyhow::Result<Block> {
+    fn block_from_row(row: BlockRow) -> Result<Block, StoreError> {
         let (id, parent_id, position, props, r#type, created_at, updated_at) = row;
+
+        if !BlockType::is_valid_type_name(&r#type) {
+            return Err(StoreError::UnknownBlockType {
+                id,
+                block_type: r#type,
+            });
+        }
 
         // converts string from the props column of the blocks table
         // into a serde_json::Value JSON representation
@@ -42,14 +50,14 @@ impl Store {
         })
     }
 
-    fn prop_type_from_block(block: &NewBlock) -> anyhow::Result<(String, String)> {
+    fn prop_type_from_block(block: &NewBlock) -> Result<(String, String), StoreError> {
         let block_type_value = serde_json::to_value(&block.r#type)?;
         let props = block_type_value.get("props").unwrap().to_string();
         let r#type = block_type_value
             .get("type")
             .unwrap()
             .as_str()
-            .expect("a block must should have a type");
+            .expect("a block must have a type");
         Ok((r#type.to_owned(), props))
     }
 
@@ -104,7 +112,8 @@ impl Store {
         Ok(())
     }
 
-    pub fn get(&self, id: Uuid) -> anyhow::Result<Option<Block>> {
+    /// Gets a Block given a uuid
+    pub fn get(&self, id: Uuid) -> Result<Option<Block>, StoreError> {
         let row = self.conn.query_row(
             "SELECT id, parent_id, position, props, type, created_at, updated_at FROM blocks WHERE id = ?1",
             params![id],
@@ -127,7 +136,7 @@ impl Store {
         })
     }
 
-    pub fn children_of(&self, parent_id: Option<Uuid>) -> anyhow::Result<Vec<Block>> {
+    pub fn children_of(&self, parent_id: Option<Uuid>) -> Result<Vec<Block>, StoreError> {
         let mut blocks = vec![];
 
         let mut stmt = self.conn.prepare("SELECT id, parent_id, position, props, type, created_at, updated_at FROM blocks WHERE parent_id IS ?1 ORDER BY position")?;
@@ -147,7 +156,8 @@ impl Store {
         }
         Ok(blocks)
     }
-    pub fn append_child(&mut self, block: NewBlock) -> anyhow::Result<Block> {
+
+    pub fn append_child(&mut self, block: NewBlock) -> Result<Block, StoreError> {
         let (r#type, props) = Store::prop_type_from_block(&block)?;
 
         let tx = self.conn.transaction()?;
@@ -190,7 +200,7 @@ impl Store {
         Self::block_from_row(row)
     }
 
-    pub fn insert_at(&mut self, block: NewBlock, index: u32) -> anyhow::Result<Block> {
+    pub fn insert_at(&mut self, block: NewBlock, index: u32) -> Result<Block, StoreError> {
         let (r#type, props) = Store::prop_type_from_block(&block)?;
 
         let tx = self.conn.transaction()?;
@@ -228,7 +238,7 @@ impl Store {
         Self::block_from_row(row)
     }
 
-    pub fn page_tree(&self, page_id: Uuid) -> anyhow::Result<Vec<(u32, Block)>> {
+    pub fn page_tree(&self, page_id: Uuid) -> Result<Vec<(u32, Block)>, StoreError> {
         let mut blocks = vec![];
 
         let mut stmt = self.conn.prepare(
@@ -269,10 +279,17 @@ impl Store {
         Ok(blocks)
     }
 
-    pub fn delete_subtree(&mut self, id: Uuid) -> anyhow::Result<()> {
-        self.conn
-            .execute("DELETE FROM blocks WHERE id = ?1", params![id])?;
-        Ok(())
+    pub fn delete_subtree(&mut self, id: Uuid) -> Result<(), StoreError> {
+        match self
+            .conn
+            .execute("DELETE FROM blocks WHERE id = ?1", params![id])
+        {
+            Ok(n) => match n {
+                0 => Err(StoreError::NotFound { id }),
+                _ => Ok(()),
+            },
+            Err(e) => Err(StoreError::Sqlite(e)),
+        }
     }
 
     pub fn move_block(
@@ -280,7 +297,7 @@ impl Store {
         id: Uuid,
         new_parent: Option<Uuid>,
         index: u32,
-    ) -> anyhow::Result<Block> {
+    ) -> Result<Block, StoreError> {
         let tx = self.conn.transaction()?;
 
         // shift the new parent's siblings before re-parenting
@@ -301,33 +318,40 @@ impl Store {
             params![new_parent, index, id],
         )?;
 
-        let row = tx.query_row(
-            "
+        let row: Option<BlockRow> = tx
+            .query_row(
+                "
             SELECT id, parent_id, position, props, type, created_at, updated_at
             FROM blocks WHERE id = ?1
             ",
-            params![id],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                ))
-            },
-        )?;
+                params![id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .optional()?;
 
         tx.commit()?;
 
-        Self::block_from_row(row)
+        match row {
+            Some(r) => Self::block_from_row(r),
+            None => Err(StoreError::NotFound { id }),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use rusqlite::params;
     use uuid::Uuid;
 
@@ -779,6 +803,8 @@ mod tests {
         let result = store.move_block(parent.id, Some(grandchild.id), 0);
         assert!(result.is_err(), "moving under a descendant must fail");
 
+        assert!(matches!(result, Err(StoreError::CycleDetected)));
+
         // the tree must be untouched after the failed move
         assert!(store.get(parent.id)?.is_some());
         assert_eq!(store.get(parent.id)?.unwrap().parent_id, None);
@@ -817,6 +843,49 @@ mod tests {
         assert!(
             result.is_err(),
             "raw SQL cycle must be aborted by the trigger"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_can_return_unknown_type_error() -> anyhow::Result<()> {
+        let store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        let block_id = Uuid::new_v4();
+
+        store.conn.execute(
+            "INSERT INTO blocks (id, parent_id, position, props, type)
+            VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                block_id,
+                None::<Uuid>,
+                0,
+                "{ text: 'Wrong type' }",
+                String::from("carrot"),
+            ],
+        )?;
+
+        let result = store.get(block_id);
+        assert!(result.is_err());
+        assert_matches!(result, Err(StoreError::UnknownBlockType { id, block_type })
+            if block_type == "carrot" && id == block_id);
+
+        Ok(())
+    }
+
+    #[test]
+    fn move_block_can_return_not_found_error() -> anyhow::Result<()> {
+        let mut store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        let block_id = Uuid::new_v4();
+        let result = store.move_block(block_id, None, 0);
+        assert!(result.is_err());
+        assert_matches!(
+            result,
+            Err(StoreError::NotFound { id }) if id == block_id
         );
 
         Ok(())
