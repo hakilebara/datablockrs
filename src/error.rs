@@ -13,6 +13,8 @@ pub enum StoreError {
     Sqlite(rusqlite::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error("Store not initialized")]
+    NotInitialized,
 }
 
 impl From<rusqlite::Error> for StoreError {
