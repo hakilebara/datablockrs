@@ -27,3 +27,5 @@ target
 
 *.sqlite
 DESIGN.md
+js/
+web/

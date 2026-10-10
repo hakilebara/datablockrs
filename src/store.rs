@@ -1,6 +1,6 @@
 use crate::error::StoreError;
 use crate::model::{Block, BlockType, NewBlock};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -68,12 +68,12 @@ impl Store {
         Ok(Store { conn })
     }
 
-    pub fn init_schema(&self) -> Result<(), rusqlite::Error> {
-        self.conn.execute_batch(
+    pub fn init_schema(&mut self) -> Result<(), rusqlite::Error> {
+        let tx = self.conn.transaction()?;
+        tx.execute_batch(
             r#"
-        BEGIN;
         CREATE TABLE IF NOT EXISTS blocks (
-            id TEXT PRIMARY KEY,
+            id TEXT PRIMARY KEY NOT NULL,
             parent_id TEXT REFERENCES blocks(id) ON DELETE CASCADE,
             position INTEGER NOT NULL,
             props TEXT,
@@ -81,15 +81,24 @@ impl Store {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updated_at TEXT
         );
-        CREATE INDEX IF NOT EXISTS idx_blocks_parent ON blocks (parent_id, position);
+        CREATE TABLE IF NOT EXISTS properties (
+            id TEXT PRIMARY KEY NOT NULL,
+            database_id TEXT NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL,
+            name TEXT,
+            type TEXT NOT NULL,
+            options TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_blocks_parent_position ON blocks (parent_id, position);
+        CREATE INDEX IF NOT EXISTS idx_properties_database_position ON properties (database_id, position);
 
         CREATE TRIGGER IF NOT EXISTS tgr_updated_at
         AFTER UPDATE OF parent_id, props, type ON blocks
-         BEGIN
+        BEGIN
             UPDATE blocks SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-         END;
+        END;
 
-        CREATE TRIGGER IF NOT EXISTS tgr_blocks_no_cycle_update
+        CREATE TRIGGER IF NOT EXISTS tgr_blocks_no_cycle_on_update
         BEFORE UPDATE OF parent_id ON blocks
         WHEN NEW.parent_id IS NOT NULL
         BEGIN
@@ -105,10 +114,10 @@ impl Store {
             SELECT 1 FROM ancestors WHERE id = NEW.id
           );
         END;
-
-        COMMIT;
         "#,
         )?;
+
+        tx.commit()?;
 
         Ok(())
     }
@@ -391,6 +400,7 @@ impl Store {
 mod tests {
     use std::assert_matches;
 
+    use crate::model::{PageProperty, PropertyValue};
     use rusqlite::params;
     use uuid::Uuid;
 
@@ -398,7 +408,7 @@ mod tests {
 
     #[test]
     fn cascade_delete_removes_children() -> Result<(), rusqlite::Error> {
-        let store = Store::open(":memory:")?;
+        let mut store = Store::open(":memory:")?;
         store.init_schema()?;
         let mut stmt = store.conn.prepare(
             r#"
@@ -481,7 +491,7 @@ mod tests {
 
     #[test]
     fn get_on_missing_id_returns_none() -> anyhow::Result<()> {
-        let store = Store::open(":memory:")?;
+        let mut store = Store::open(":memory:")?;
         store.init_schema()?;
         let retreived_block = store.get(Uuid::new_v4())?;
         assert_eq!(retreived_block, None);
@@ -500,6 +510,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "A Page".to_string(),
+                properties: vec![],
             },
         })?;
         append_elements(&mut store, Some(parent_id), BlockType::Divider {}, 3)?;
@@ -641,6 +652,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: String::from("Main Page"),
+                properties: vec![],
             },
         })?;
 
@@ -704,6 +716,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Page A".to_string(),
+                properties: vec![],
             },
         })?;
         store.append_child(NewBlock {
@@ -711,6 +724,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Page B".to_string(),
+                properties: vec![],
             },
         })?;
 
@@ -781,6 +795,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Root".to_string(),
+                properties: vec![],
             },
         })?;
 
@@ -814,7 +829,7 @@ mod tests {
         Ok(())
     }
 
-    /// The `tgr_blocks_no_cycle_update` trigger must refuse a move that
+    /// The `tgr_blocks_no_cycle_on_update` trigger must refuse a move that
     /// would place a block under its own descendant.
     #[test]
     fn move_block_rejects_cycles() -> anyhow::Result<()> {
@@ -826,6 +841,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Page".to_string(),
+                properties: vec![],
             },
         })?;
         let child = store.append_child(NewBlock {
@@ -866,6 +882,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Page".to_string(),
+                properties: vec![],
             },
         })?;
         let child = store.append_child(NewBlock {
@@ -889,7 +906,7 @@ mod tests {
 
     #[test]
     fn get_can_return_unknown_type_error() -> anyhow::Result<()> {
-        let store = Store::open(":memory:")?;
+        let mut store = Store::open(":memory:")?;
         store.init_schema()?;
 
         let block_id = Uuid::new_v4();
@@ -951,6 +968,86 @@ mod tests {
         assert!(updated_block.updated_at.is_some());
         assert_matches!(updated_block.r#type, BlockType::Divider {});
         assert_eq!(updated_block.id, block.id);
+
+        Ok(())
+    }
+
+    #[test]
+    fn deleting_database_block_cascade_deletes_its_properties() -> anyhow::Result<()> {
+        let mut store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        let block = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: None,
+            r#type: BlockType::Database {
+                title: "Database Title".to_string(),
+            },
+        })?;
+
+        store.conn.execute("INSERT INTO properties (id, database_id, position, name, type, options) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![Uuid::new_v4(), block.id, 0, "URL", "text", "http://google.com"])?;
+
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM properties WHERE database_id = ?1",
+            params![block.id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 1);
+
+        store.delete_subtree(block.id)?;
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM properties WHERE database_id = ?1",
+            params![block.id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn database_and_page_entry_survive_serialization_round_trip() -> anyhow::Result<()> {
+        let mut store = Store::open(":memory:")?;
+        store.init_schema()?;
+
+        let db = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: None,
+            r#type: BlockType::Database {
+                title: "Tasks".to_string(),
+            },
+        })?;
+
+        let page = store.append_child(NewBlock {
+            id: Uuid::new_v4(),
+            parent_id: Some(db.id),
+            r#type: BlockType::Page {
+                title: "Row one".to_string(),
+                properties: vec![
+                    PageProperty {
+                        id: "prop-1".to_string(),
+                        value: PropertyValue::Select("Done".to_string()),
+                    },
+                    PageProperty {
+                        id: "prop-2".to_string(),
+                        value: PropertyValue::Checkbox(true),
+                    },
+                ],
+            },
+        })?;
+
+        let fetched_db = store.get(db.id)?.expect("database block should exist");
+        assert_eq!(fetched_db.id, db.id);
+        assert_eq!(fetched_db.r#type, db.r#type);
+
+        let fetched_page = store.get(page.id)?.expect("page entry should exist");
+        assert_eq!(fetched_page.id, page.id);
+        assert_eq!(fetched_page.parent_id, Some(db.id));
+        assert_eq!(fetched_page.r#type, page.r#type);
+
+        let children = store.children_of(Some(db.id))?;
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].id, page.id);
 
         Ok(())
     }

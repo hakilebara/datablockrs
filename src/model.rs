@@ -12,17 +12,77 @@ pub enum Language {
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 #[serde(tag = "type", content = "props", rename_all = "snake_case")]
 pub enum BlockType {
-    Page { title: String },
-    Text { text: String },
-    Heading1 { text: String },
-    Heading2 { text: String },
-    Heading3 { text: String },
-    BulletedListItem { text: String },
-    NumberedListItem { text: String },
-    Todo { checked: bool, text: String },
-    Quote { text: String },
+    Page {
+        title: String,
+        properties: Vec<PageProperty>,
+    },
+    Text {
+        text: String,
+    },
+    Heading1 {
+        text: String,
+    },
+    Heading2 {
+        text: String,
+    },
+    Heading3 {
+        text: String,
+    },
+    BulletedListItem {
+        text: String,
+    },
+    NumberedListItem {
+        text: String,
+    },
+    Todo {
+        checked: bool,
+        text: String,
+    },
+    Quote {
+        text: String,
+    },
     Divider {},
-    Code { language: Language, content: String },
+    Code {
+        language: Language,
+        content: String,
+    },
+    Database {
+        title: String,
+    },
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+pub struct PageProperty {
+    pub id: String,
+    pub value: PropertyValue,
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum PropertyValue {
+    Text(String),
+    Number(f64),
+    Checkbox(bool),
+    Select(String),
+    MultiSelect(Vec<String>),
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+pub enum PropertyType {
+    Text,
+    Number,
+    Checkbox,
+    Select,
+    MultiSelect,
+}
+
+impl PropertyType {
+    pub fn is_valid_type_name(typename: &str) -> bool {
+        matches!(
+            typename,
+            "text" | "number" | "checkbox" | "select" | "multi_select"
+        )
+    }
 }
 
 impl BlockType {
@@ -39,6 +99,7 @@ impl BlockType {
             BlockType::Divider { .. } => "divider",
             BlockType::Code { .. } => "code",
             BlockType::Quote { .. } => "quote",
+            BlockType::Database { .. } => "database",
         }
     }
 
@@ -56,6 +117,7 @@ impl BlockType {
                 | "divider"
                 | "code"
                 | "quote"
+                | "database"
         )
     }
 }
@@ -90,6 +152,10 @@ mod test {
         let bts = vec![
             BlockType::Page {
                 title: String::from("foo"),
+                properties: vec![PageProperty {
+                    id: "p1".to_string(),
+                    value: PropertyValue::Select("Done".to_string()),
+                }],
             },
             BlockType::Text {
                 text: String::from("foo"),
@@ -121,10 +187,51 @@ mod test {
             BlockType::Quote {
                 text: String::from("foo"),
             },
+            BlockType::Database {
+                title: String::from("foo"),
+            },
         ];
 
         for bt in bts {
             assert!(serde_json::to_value(&bt).unwrap()["type"] == bt.type_name())
         }
+    }
+
+    #[test]
+    fn page_property_can_be_json_serialized() -> anyhow::Result<()> {
+        let props = vec![
+            PageProperty {
+                id: "p1".to_string(),
+                value: PropertyValue::Text("Some Text".to_string()),
+            },
+            PageProperty {
+                id: "p2".to_string(),
+                value: PropertyValue::Number(42.5),
+            },
+            PageProperty {
+                id: "p3".to_string(),
+                value: PropertyValue::Checkbox(false),
+            },
+            PageProperty {
+                id: "p4".to_string(),
+                value: PropertyValue::Select("an Option".to_string()),
+            },
+            PageProperty {
+                id: "p5".to_string(),
+                value: PropertyValue::MultiSelect(vec![
+                    "option one".to_string(),
+                    "option two".to_string(),
+                    "option three".to_string(),
+                ]),
+            },
+        ];
+
+        for prop in props {
+            let json = serde_json::to_string(&prop)?;
+            let back: PageProperty = serde_json::from_str(&json)?;
+            assert_eq!(prop, back);
+        }
+
+        Ok(())
     }
 }

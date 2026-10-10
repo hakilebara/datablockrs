@@ -13,37 +13,34 @@ fn main() -> anyhow::Result<()> {
     let root = store.append_child(NewBlock {
         id: Uuid::new_v4(),
         parent_id: None,
-        r#type: BlockType::Page {
-            title: "Root".to_string(),
+        r#type: BlockType::Database {
+            title: "Database".to_string(),
         },
     })?;
 
-    let first_child = store.append_child(NewBlock {
+    store.append_child(NewBlock {
         id: Uuid::new_v4(),
-        parent_id: Some(root.id),
-        r#type: BlockType::Text {
-            text: String::from("A | Root > A"),
+        parent_id: None,
+        r#type: BlockType::Page {
+            title: "Page One".to_string(),
+            properties: vec![],
+        },
+    })?;
+
+    store.append_child(NewBlock {
+        id: Uuid::new_v4(),
+        parent_id: None,
+        r#type: BlockType::Page {
+            title: "Page Two".to_string(),
+            properties: vec![],
         },
     })?;
     store.append_child(NewBlock {
         id: Uuid::new_v4(),
-        parent_id: Some(root.id),
-        r#type: BlockType::Text {
-            text: String::from("B | Root > B"),
-        },
-    })?;
-    store.append_child(NewBlock {
-        id: Uuid::new_v4(),
-        parent_id: Some(first_child.id),
-        r#type: BlockType::Text {
-            text: String::from("C | Root > A > C"),
-        },
-    })?;
-    store.append_child(NewBlock {
-        id: Uuid::new_v4(),
-        parent_id: Some(root.id),
-        r#type: BlockType::Text {
-            text: String::from("D | Root > D"),
+        parent_id: None,
+        r#type: BlockType::Page {
+            title: "Page Three".to_string(),
+            properties: vec![],
         },
     })?;
 
