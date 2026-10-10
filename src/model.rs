@@ -12,17 +12,68 @@ pub enum Language {
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 #[serde(tag = "type", content = "props", rename_all = "snake_case")]
 pub enum BlockType {
-    Page { title: String },
-    Text { text: String },
-    Heading1 { text: String },
-    Heading2 { text: String },
-    Heading3 { text: String },
-    BulletedListItem { text: String },
-    NumberedListItem { text: String },
-    Todo { checked: bool, text: String },
-    Quote { text: String },
+    Page {
+        title: String,
+        properties: Vec<PageProperty>,
+    },
+    Text {
+        text: String,
+    },
+    Heading1 {
+        text: String,
+    },
+    Heading2 {
+        text: String,
+    },
+    Heading3 {
+        text: String,
+    },
+    BulletedListItem {
+        text: String,
+    },
+    NumberedListItem {
+        text: String,
+    },
+    Todo {
+        checked: bool,
+        text: String,
+    },
+    Quote {
+        text: String,
+    },
     Divider {},
-    Code { language: Language, content: String },
+    Code {
+        language: Language,
+        content: String,
+    },
+    Database {
+        title: String,
+    },
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+pub struct PageProperty {
+    pub id: String,
+    pub value: PropertyValue,
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum PropertyValue {
+    Text(String),
+    Number(f64),
+    Checkbox(bool),
+    Select(String),
+    MultiSelect(Vec<String>),
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+pub enum PropertyType {
+    Text,
+    Number,
+    Checkbox,
+    Select,
+    MultiSelect,
 }
 
 impl BlockType {
@@ -39,6 +90,7 @@ impl BlockType {
             BlockType::Divider { .. } => "divider",
             BlockType::Code { .. } => "code",
             BlockType::Quote { .. } => "quote",
+            BlockType::Database { .. } => "database",
         }
     }
 
@@ -56,6 +108,7 @@ impl BlockType {
                 | "divider"
                 | "code"
                 | "quote"
+                | "database"
         )
     }
 }
@@ -90,6 +143,7 @@ mod test {
         let bts = vec![
             BlockType::Page {
                 title: String::from("foo"),
+                properties: vec![],
             },
             BlockType::Text {
                 text: String::from("foo"),
@@ -120,6 +174,9 @@ mod test {
             },
             BlockType::Quote {
                 text: String::from("foo"),
+            },
+            BlockType::Database {
+                title: String::from("foo"),
             },
         ];
 

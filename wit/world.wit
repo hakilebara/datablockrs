@@ -12,8 +12,22 @@ interface types {
     text: string,
   }
 
+  variant property-value {
+    text(string),
+    number(f64),
+    checkbox(bool),
+    select(string),
+    multi-select(list<string>),
+  }
+
+  record page-property {
+    id: string,
+    value: property-value,
+  }
+
   record page-props {
     title: string,
+    properties: list<page-property>
   }
 
   record todo-props {
@@ -24,6 +38,10 @@ interface types {
   record code-props {
     language: language,
     content: string,
+  }
+
+  record database-props {
+    title: string,
   }
 
   variant block-type {
@@ -38,6 +56,7 @@ interface types {
     quote(text-props),
     divider,
     code(code-props),
+    database(database-props),
   }
 
   type uuid = string;

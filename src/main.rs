@@ -15,6 +15,7 @@ fn main() -> anyhow::Result<()> {
         parent_id: None,
         r#type: BlockType::Page {
             title: "Root".to_string(),
+            properties: vec![],
         },
     })?;
 

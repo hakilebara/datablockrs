@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{
     bindings::exports::datablockrs::blockstore::types::{self as wit},
     error::StoreError,
-    model::{Block, BlockType, Language, NewBlock},
+    model::{Block, BlockType, Language, NewBlock, PageProperty, PropertyValue},
     store::Store,
 };
 use std::sync::Mutex;
@@ -107,7 +107,10 @@ export!(Component);
 impl From<wit::BlockType> for BlockType {
     fn from(b: wit::BlockType) -> Self {
         match b {
-            wit::BlockType::Page(wit::PageProps { title }) => BlockType::Page { title },
+            wit::BlockType::Page(wit::PageProps { title, properties }) => BlockType::Page {
+                title,
+                properties: properties.into_iter().map(|p| p.into()).collect(),
+            },
             wit::BlockType::Text(wit::TextProps { text }) => BlockType::Text { text },
             wit::BlockType::Heading1(wit::TextProps { text }) => BlockType::Heading1 { text },
             wit::BlockType::Heading2(wit::TextProps { text }) => BlockType::Heading2 { text },
@@ -127,6 +130,7 @@ impl From<wit::BlockType> for BlockType {
             },
             wit::BlockType::Quote(wit::TextProps { text }) => BlockType::Quote { text },
             wit::BlockType::Divider => BlockType::Divider {},
+            wit::BlockType::Database(wit::DatabaseProps { title }) => BlockType::Database { title },
         }
     }
 }
@@ -134,7 +138,10 @@ impl From<wit::BlockType> for BlockType {
 impl From<BlockType> for wit::BlockType {
     fn from(b: BlockType) -> Self {
         match b {
-            BlockType::Page { title } => wit::BlockType::Page(wit::PageProps { title }),
+            BlockType::Page { title, properties } => wit::BlockType::Page(wit::PageProps {
+                title,
+                properties: properties.into_iter().map(|p| p.into()).collect(),
+            }),
             BlockType::Text { text } => wit::BlockType::Text(wit::TextProps { text }),
             BlockType::Heading1 { text } => wit::BlockType::Heading1(wit::TextProps { text }),
             BlockType::Heading2 { text } => wit::BlockType::Heading2(wit::TextProps { text }),
@@ -154,6 +161,7 @@ impl From<BlockType> for wit::BlockType {
                 language: language.into(),
                 content,
             }),
+            BlockType::Database { title } => wit::BlockType::Database(wit::DatabaseProps { title }),
         }
     }
 }
@@ -216,6 +224,48 @@ impl From<wit::Language> for Language {
     }
 }
 
+impl From<PageProperty> for wit::PageProperty {
+    fn from(pp: PageProperty) -> Self {
+        wit::PageProperty {
+            id: pp.id,
+            value: pp.value.into(),
+        }
+    }
+}
+
+impl From<wit::PageProperty> for PageProperty {
+    fn from(pp: wit::PageProperty) -> Self {
+        PageProperty {
+            id: pp.id,
+            value: pp.value.into(),
+        }
+    }
+}
+
+impl From<PropertyValue> for wit::PropertyValue {
+    fn from(pv: PropertyValue) -> Self {
+        match pv {
+            PropertyValue::Text(s) => wit::PropertyValue::Text(s),
+            PropertyValue::Number(f) => wit::PropertyValue::Number(f),
+            PropertyValue::Checkbox(b) => wit::PropertyValue::Checkbox(b),
+            PropertyValue::Select(s) => wit::PropertyValue::Select(s),
+            PropertyValue::MultiSelect(vs) => wit::PropertyValue::MultiSelect(vs),
+        }
+    }
+}
+
+impl From<wit::PropertyValue> for PropertyValue {
+    fn from(pv: wit::PropertyValue) -> Self {
+        match pv {
+            wit::PropertyValue::Text(s) => PropertyValue::Text(s),
+            wit::PropertyValue::Number(f) => PropertyValue::Number(f),
+            wit::PropertyValue::Checkbox(b) => PropertyValue::Checkbox(b),
+            wit::PropertyValue::Select(s) => PropertyValue::Select(s),
+            wit::PropertyValue::MultiSelect(vs) => PropertyValue::MultiSelect(vs),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,7 +273,10 @@ mod tests {
     #[test]
     fn block_type_round_trips_through_wit() {
         let variants = vec![
-            BlockType::Page { title: "t".into() },
+            BlockType::Page {
+                title: "t".into(),
+                properties: vec![],
+            },
             BlockType::Text { text: "t".into() },
             BlockType::Heading1 { text: "t".into() },
             BlockType::Heading2 { text: "t".into() },

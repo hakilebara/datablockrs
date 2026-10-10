@@ -1,6 +1,6 @@
 use crate::error::StoreError;
 use crate::model::{Block, BlockType, NewBlock};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -500,6 +500,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "A Page".to_string(),
+                properties: vec![],
             },
         })?;
         append_elements(&mut store, Some(parent_id), BlockType::Divider {}, 3)?;
@@ -641,6 +642,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: String::from("Main Page"),
+                properties: vec![],
             },
         })?;
 
@@ -704,6 +706,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Page A".to_string(),
+                properties: vec![],
             },
         })?;
         store.append_child(NewBlock {
@@ -711,6 +714,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Page B".to_string(),
+                properties: vec![],
             },
         })?;
 
@@ -781,6 +785,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Root".to_string(),
+                properties: vec![],
             },
         })?;
 
@@ -826,6 +831,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Page".to_string(),
+                properties: vec![],
             },
         })?;
         let child = store.append_child(NewBlock {
@@ -866,6 +872,7 @@ mod tests {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Page".to_string(),
+                properties: vec![],
             },
         })?;
         let child = store.append_child(NewBlock {
