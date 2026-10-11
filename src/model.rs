@@ -67,6 +67,15 @@ pub enum PropertyValue {
     MultiSelect(Vec<String>),
 }
 
+pub struct Property {
+    pub id: Uuid,
+    pub database_id: Uuid,
+    pub position: u32,
+    pub name: String,
+    pub r#type: PropertyType,
+    pub options: String,
+}
+
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 pub enum PropertyType {
     Text,
