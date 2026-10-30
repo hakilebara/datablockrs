@@ -28,3 +28,4 @@ target
 *.sqlite
 DESIGN.md
 web/wasm-bindings/
+.DS_Store

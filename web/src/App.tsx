@@ -1,4 +1,4 @@
-import type {Block} from '../wasm-bindings/interfaces/datablockrs-blockstore-types.js'
+import type {Block} from './api'
 
 function App({tree}: {tree: Block[]}) {
   return (

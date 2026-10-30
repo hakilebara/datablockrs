@@ -1,8 +1,8 @@
 import {StrictMode} from 'react'
 import {createRoot} from 'react-dom/client'
 import './index.css'
-import App from './App.tsx'
-import {types} from '../wasm-bindings/datablockrs'
+import App from './App'
+import {types} from './api'
 
 types.initSchema();
 let tree = types.childrenOf(undefined);
