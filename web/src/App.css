@@ -1,0 +1,38 @@
+.layout {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(96px, 1fr) minmax(auto, 720px) minmax(96px, 1fr);
+  grid-template-areas:
+    "left   top     right"
+    "left   content right";
+
+  grid-template-rows: 200px 1fr;
+}
+
+.left {
+  grid-area: left;
+}
+
+.right {
+  grid-area: right;
+}
+
+.content {
+  grid-area: content;
+}
+
+.top {
+  grid-area: top;
+  align-content: flex-end;
+
+  h1 {
+    color: #37352f;
+    font-weight: 700;
+    font-size: 40px;
+  }
+
+  h1[contenteditable][data-empty="true"]::after {
+    content: attr(data-placeholder);
+    color: #37352f40;
+  }
+}

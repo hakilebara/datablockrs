@@ -146,6 +146,7 @@ impl Store {
         })
     }
 
+    /// Return the children of a given block
     pub fn children_of(&self, parent_id: Option<Uuid>) -> Result<Vec<Block>, StoreError> {
         let mut blocks = vec![];
 
@@ -248,6 +249,8 @@ impl Store {
         Self::block_from_row(row)
     }
 
+    /// Return the nested list of children block of a given page
+    /// returns a Vec of (depth, Block) tuples
     pub fn page_tree(&self, page_id: Uuid) -> Result<Vec<(u32, Block)>, StoreError> {
         let mut blocks = vec![];
 
