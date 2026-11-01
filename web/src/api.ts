@@ -6,7 +6,6 @@ import type {Block} from "../wasm-bindings/interfaces/datablockrs-blockstore-typ
 
 export function createPage(title: string): Block {
   return types.appendChild({
-    id: crypto.randomUUID(),
     parentId: undefined,
     type: {tag: 'page', val: {title, properties: []}}
   })

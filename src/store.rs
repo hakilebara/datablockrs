@@ -186,15 +186,17 @@ impl Store {
             0
         };
 
+        let id = Uuid::new_v4();
+
         tx.execute(
             "INSERT INTO blocks (id, parent_id, position, props, type)
             VALUES (?1, ?2, ?3, ?4, ?5);",
-            params![block.id, block.parent_id, position, props, r#type],
+            params![id, block.parent_id, position, props, r#type],
         )?;
 
         let row = tx.query_row(
             "SELECT id, parent_id, position, props, type, created_at, updated_at FROM blocks WHERE id = ?1",
-            params![block.id],
+            params![id],
             |row| {
                     Ok((
                         row.get(0)?,
@@ -221,16 +223,17 @@ impl Store {
             params![block.parent_id, index],
         )?;
 
+        let id = Uuid::new_v4();
         tx.execute(
             "INSERT INTO blocks (id, parent_id, position, props, type)
             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![block.id, block.parent_id, index, props, r#type],
+            params![id, block.parent_id, index, props, r#type],
         )?;
 
         let row = tx.query_row(
             "SELECT id, parent_id, position, props, type, created_at, updated_at
             FROM blocks WHERE id = ?1",
-            params![block.id],
+            params![id],
             |row| {
                 Ok((
                     row.get(0)?,
@@ -456,16 +459,14 @@ mod tests {
 
     #[test]
     fn append_returns_block() -> anyhow::Result<()> {
-        let (id, parent_id, r#type) = (Uuid::new_v4(), None, BlockType::Divider {});
+        let (parent_id, r#type) = (None, BlockType::Divider {});
         let new_block = NewBlock {
-            id,
             parent_id,
             r#type: r#type.clone(),
         };
         let mut store = Store::open(":memory:")?;
         store.init_schema()?;
         let inserted_block = store.append_child(new_block)?;
-        assert_eq!(id, inserted_block.id);
         assert_eq!(parent_id, inserted_block.parent_id);
         assert_eq!(inserted_block.position, 0);
         assert_eq!(r#type, inserted_block.r#type);
@@ -477,16 +478,12 @@ mod tests {
     fn block_gets_found_by_id() -> anyhow::Result<()> {
         let mut store = Store::open(":memory:")?;
         store.init_schema()?;
-        let (id, parent_id, r#type) = (Uuid::new_v4(), None, BlockType::Divider {});
+        let inserted_block = store.append_child(NewBlock {
+            parent_id: None,
+            r#type: BlockType::Divider {},
+        })?;
 
-        let new_block = NewBlock {
-            id,
-            parent_id,
-            r#type: r#type,
-        };
-        let inserted_block = store.append_child(new_block)?;
-
-        let retreived_block = store.get(id)?.unwrap();
+        let retreived_block = store.get(inserted_block.id)?.unwrap();
 
         assert_eq!(inserted_block, retreived_block);
         Ok(())
@@ -507,18 +504,16 @@ mod tests {
         let mut store = Store::open(":memory:")?;
         store.init_schema()?;
 
-        let parent_id = Uuid::new_v4();
-        store.append_child(NewBlock {
-            id: parent_id,
+        let parent = store.append_child(NewBlock {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "A Page".to_string(),
                 properties: vec![],
             },
         })?;
-        append_elements(&mut store, Some(parent_id), BlockType::Divider {}, 3)?;
+        append_elements(&mut store, Some(parent.id), BlockType::Divider {}, 3)?;
 
-        let children_blocks = store.children_of(Some(parent_id))?;
+        let children_blocks = store.children_of(Some(parent.id))?;
 
         assert_eq!(children_blocks.len(), 3);
 
@@ -545,7 +540,6 @@ mod tests {
         store.init_schema()?;
 
         let block = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: None,
             r#type: BlockType::Divider {},
         })?;
@@ -563,7 +557,6 @@ mod tests {
 
         let block = store.insert_at(
             NewBlock {
-                id: Uuid::new_v4(),
                 parent_id: None,
                 r#type: BlockType::Divider {},
             },
@@ -580,45 +573,36 @@ mod tests {
         let mut store = Store::open(":memory:")?;
         store.init_schema()?;
 
-        let parent_id = Uuid::new_v4();
-        let block_0_id = Uuid::new_v4();
-        let block_1_id = Uuid::new_v4();
-        let middle_block_id = Uuid::new_v4();
-
-        store.append_child(NewBlock {
-            id: parent_id,
+        let parent = store.append_child(NewBlock {
             parent_id: None,
             r#type: BlockType::Divider {},
         })?;
 
         let block_0 = store.append_child(NewBlock {
-            id: block_0_id,
-            parent_id: Some(parent_id),
+            parent_id: Some(parent.id),
             r#type: BlockType::Divider {},
         })?;
         assert_eq!(block_0.position, 0);
 
         let block_1 = store.append_child(NewBlock {
-            id: block_1_id,
-            parent_id: Some(parent_id),
+            parent_id: Some(parent.id),
             r#type: BlockType::Divider {},
         })?;
         assert_eq!(block_1.position, 1);
 
         let middle_block = store.insert_at(
             NewBlock {
-                id: middle_block_id,
-                parent_id: Some(parent_id),
+                parent_id: Some(parent.id),
                 r#type: BlockType::Divider {},
             },
             1,
         )?;
         assert_eq!(middle_block.position, 1);
 
-        let children = store.children_of(Some(parent_id))?;
-        assert_eq!(children[0].id, block_0_id);
-        assert_eq!(children[1].id, middle_block_id);
-        assert_eq!(children[2].id, block_1_id);
+        let children = store.children_of(Some(parent.id))?;
+        assert_eq!(children[0].id, block_0.id);
+        assert_eq!(children[1].id, middle_block.id);
+        assert_eq!(children[2].id, block_1.id);
         assert_eq!(children[0].position, 0);
         assert_eq!(children[1].position, 1);
         assert_eq!(children[2].position, 2);
@@ -635,7 +619,6 @@ mod tests {
     ) -> anyhow::Result<()> {
         for _ in 0..n {
             store.append_child(NewBlock {
-                id: Uuid::new_v4(),
                 parent_id,
                 r#type: r#type.clone(),
             })?;
@@ -648,10 +631,7 @@ mod tests {
         let mut store = Store::open(":memory:")?;
         store.init_schema()?;
 
-        let parent_id = Uuid::new_v4();
-
-        store.append_child(NewBlock {
-            id: parent_id,
+        let parent = store.append_child(NewBlock {
             parent_id: None,
             r#type: BlockType::Page {
                 title: String::from("Main Page"),
@@ -660,27 +640,23 @@ mod tests {
         })?;
 
         store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: Some(parent_id),
+            parent_id: Some(parent.id),
             r#type: BlockType::Divider {},
         })?;
 
         let sub_block_1 = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: Some(parent_id),
+            parent_id: Some(parent.id),
             r#type: BlockType::Divider {},
         })?;
 
         // parent > sub_block_1 > sub_block_2
         let sub_block_2 = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: Some(sub_block_1.id),
             r#type: BlockType::Divider {},
         })?;
 
         // parent > sub_block_1 > sub_block_2 > sub_block_3
         let sub_block_3 = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: Some(sub_block_2.id),
             r#type: BlockType::Todo {
                 checked: true,
@@ -688,7 +664,7 @@ mod tests {
             },
         })?;
 
-        let vec = store.page_tree(parent_id)?;
+        let vec = store.page_tree(parent.id)?;
         assert_eq!(vec.len(), 5);
 
         let level_3_block: Vec<_> = vec.iter().filter(|(d, _)| *d == 3).collect();
@@ -711,19 +687,14 @@ mod tests {
         let mut store = Store::open(":memory:")?;
         store.init_schema()?;
 
-        let page_a = Uuid::new_v4();
-        let page_b = Uuid::new_v4();
-
-        store.append_child(NewBlock {
-            id: page_a,
+        let page_a = store.append_child(NewBlock {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Page A".to_string(),
                 properties: vec![],
             },
         })?;
-        store.append_child(NewBlock {
-            id: page_b,
+        let page_b = store.append_child(NewBlock {
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Page B".to_string(),
@@ -732,41 +703,36 @@ mod tests {
         })?;
 
         let a0 = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: Some(page_a),
+            parent_id: Some(page_a.id),
             r#type: BlockType::Divider {},
         })?;
         let a1 = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: Some(page_a),
+            parent_id: Some(page_a.id),
             r#type: BlockType::Divider {},
         })?;
         let a2 = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: Some(page_a),
+            parent_id: Some(page_a.id),
             r#type: BlockType::Divider {},
         })?;
         let b0 = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: Some(page_b),
+            parent_id: Some(page_b.id),
             r#type: BlockType::Divider {},
         })?;
         let b1 = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
-            parent_id: Some(page_b),
+            parent_id: Some(page_b.id),
             r#type: BlockType::Divider {},
         })?;
 
-        let moved = store.move_block(a1.id, Some(page_b), 1)?;
+        let moved = store.move_block(a1.id, Some(page_b.id), 1)?;
 
-        assert_eq!(moved.parent_id, Some(page_b));
+        assert_eq!(moved.parent_id, Some(page_b.id));
         assert_eq!(moved.position, 1);
         assert!(
             moved.updated_at.is_some(),
             "re-parenting must bump updated_at"
         );
 
-        let children_b = store.children_of(Some(page_b))?;
+        let children_b = store.children_of(Some(page_b.id))?;
         assert_eq!(children_b.len(), 3);
         assert_eq!(children_b[0].id, b0.id);
         assert_eq!(children_b[1].id, a1.id);
@@ -778,7 +744,7 @@ mod tests {
             "position shift must not bump updated_at"
         );
 
-        let children_a = store.children_of(Some(page_a))?;
+        let children_a = store.children_of(Some(page_a.id))?;
         assert_eq!(children_a.len(), 2);
         assert_eq!(children_a[0].id, a0.id);
         assert_eq!(children_a[1].id, a2.id);
@@ -794,7 +760,6 @@ mod tests {
         store.init_schema()?;
 
         let root = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Root".to_string(),
@@ -803,17 +768,14 @@ mod tests {
         })?;
 
         let child = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: Some(root.id),
             r#type: BlockType::Divider {},
         })?;
         let sibling = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: Some(root.id),
             r#type: BlockType::Divider {},
         })?;
         let grandchild = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: Some(child.id),
             r#type: BlockType::Divider {},
         })?;
@@ -840,7 +802,6 @@ mod tests {
         store.init_schema()?;
 
         let parent = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Page".to_string(),
@@ -848,12 +809,10 @@ mod tests {
             },
         })?;
         let child = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: Some(parent.id),
             r#type: BlockType::Divider {},
         })?;
         let grandchild = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: Some(child.id),
             r#type: BlockType::Divider {},
         })?;
@@ -881,7 +840,6 @@ mod tests {
         store.init_schema()?;
 
         let parent = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: None,
             r#type: BlockType::Page {
                 title: "Page".to_string(),
@@ -889,7 +847,6 @@ mod tests {
             },
         })?;
         let child = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: Some(parent.id),
             r#type: BlockType::Divider {},
         })?;
@@ -956,7 +913,6 @@ mod tests {
         store.init_schema()?;
 
         let block = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: None,
             r#type: BlockType::Todo {
                 checked: true,
@@ -981,7 +937,6 @@ mod tests {
         store.init_schema()?;
 
         let block = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: None,
             r#type: BlockType::Database {
                 title: "Database Title".to_string(),
@@ -1014,7 +969,6 @@ mod tests {
         store.init_schema()?;
 
         let db = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: None,
             r#type: BlockType::Database {
                 title: "Tasks".to_string(),
@@ -1022,7 +976,6 @@ mod tests {
         })?;
 
         let page = store.append_child(NewBlock {
-            id: Uuid::new_v4(),
             parent_id: Some(db.id),
             r#type: BlockType::Page {
                 title: "Row one".to_string(),

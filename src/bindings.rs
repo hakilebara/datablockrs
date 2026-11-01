@@ -171,10 +171,8 @@ impl TryFrom<wit::NewBlock> for NewBlock {
     type Error = uuid::Error;
 
     fn try_from(b: wit::NewBlock) -> Result<Self, Self::Error> {
-        let id = Uuid::parse_str(&b.id)?;
         let parent_id: Option<Uuid> = b.parent_id.as_deref().map(Uuid::parse_str).transpose()?;
         Ok(NewBlock {
-            id,
             parent_id,
             r#type: b.type_.into(),
         })

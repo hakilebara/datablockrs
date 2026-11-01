@@ -2,7 +2,6 @@ use datablockrs::{
     model::{BlockType, NewBlock},
     store::Store,
 };
-use uuid::Uuid;
 
 fn main() -> anyhow::Result<()> {
     let mut store = Store::open("db.sqlite").expect("should be able to open a sqlite database");
@@ -11,7 +10,6 @@ fn main() -> anyhow::Result<()> {
         .expect("should be able to initialize a db schema");
 
     let root = store.append_child(NewBlock {
-        id: Uuid::new_v4(),
         parent_id: None,
         r#type: BlockType::Database {
             title: "Database".to_string(),
@@ -19,7 +17,6 @@ fn main() -> anyhow::Result<()> {
     })?;
 
     store.append_child(NewBlock {
-        id: Uuid::new_v4(),
         parent_id: None,
         r#type: BlockType::Page {
             title: "Page One".to_string(),
@@ -28,7 +25,6 @@ fn main() -> anyhow::Result<()> {
     })?;
 
     store.append_child(NewBlock {
-        id: Uuid::new_v4(),
         parent_id: None,
         r#type: BlockType::Page {
             title: "Page Two".to_string(),
@@ -36,7 +32,6 @@ fn main() -> anyhow::Result<()> {
         },
     })?;
     store.append_child(NewBlock {
-        id: Uuid::new_v4(),
         parent_id: None,
         r#type: BlockType::Page {
             title: "Page Three".to_string(),

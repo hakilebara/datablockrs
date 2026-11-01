@@ -20,7 +20,7 @@ function App({root}: {root: Block}) {
     })
     setPage(updated)
     setTitle(next)
-    types.appendChild({id: crypto.randomUUID(), parentId: root.id, type: {tag: "text", val: {text: "hello"}}});
+    types.appendChild({parentId: root.id, type: {tag: "text", val: {text: "hello"}}});
     setTree(types.pageTree(root.id));
   }
 

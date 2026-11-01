@@ -72,7 +72,6 @@ interface types {
   }
 
   record new-block {
-    id: uuid,
     parent-id: option<uuid>,
     %type: block-type,
   }

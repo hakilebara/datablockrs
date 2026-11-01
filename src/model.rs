@@ -143,7 +143,6 @@ pub struct Block {
 }
 #[derive(Deserialize, Serialize)]
 pub struct NewBlock {
-    pub id: Uuid,
     pub parent_id: Option<Uuid>,
     #[serde(flatten)]
     pub r#type: BlockType,
